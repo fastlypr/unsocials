@@ -182,14 +182,19 @@ async function main() {
         qualification_status: row.qualification_status,
         lead_category: row.lead_category,
         lead_sub_category: subCat,
+        qualification_note: row.qualification_note || '',
         first_name: row.first_name || '',
         company_name: row.company_name || '',
         business_type_plural: businessTypePlural,
         city: city,
         market_line: marketLine,
-        personal_note: '',
-        personal_hook: '',
         hook_fallback: hookFallback,
+        // Raw enrichment fields — the DM.md prompt derives personal_note and
+        // personal_hook from these instead of receiving them pre-filled.
+        title: row.title || '',
+        titleDescription: row.titleDescription || '',
+        summary: row.summary || '',
+        industry: row.industry || '',
       };
 
       const prompt = buildPrompt(promptBody, vars);
