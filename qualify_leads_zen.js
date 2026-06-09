@@ -136,58 +136,72 @@ async function main() {
 
   const counts = { total: rawRows.length, qualified: 0, needs_review: 0, disqualified: 0, errors: 0, skipped: 0 };
 
-  for (let i = 0; i < rawRows.length; i++) {
-    const idx = i + 1;
-    const row = rawRows[i];
-    const id = L.leadId(row);
-
-    if (resume && processed.has(id)) { counts.skipped++; console.log(`${idx}/${rawRows.length} (skip, already done) ${id}`); continue; }
-
-    const lead = L.normalizeLead(row);
-    const pass = L.passthroughFields(row);
-    const source = L.sourceFields(row);
-    const prompt = L.buildPrompt(lead, instructions);
-
-    // Live progress line BEFORE the (30-90s) reasoning call, so a slow lead
-    // never looks like a hang.
-    process.stdout.write(`${idx}/${rawRows.length} qualifying ${lead.companyName || '<lead>'} … `);
-    const t0 = Date.now();
-    const { ok, parsed, raw, error } = await qualifyLead(key, prompt, opts);
-    const secs = ((Date.now() - t0) / 1000).toFixed(0);
-    if (!ok) {
-      counts.errors++;
-      console.log(`-> error (${error}) (${secs}s)`);
-      L.appendCsvRow(files.errors, L.CSV_COLUMNS, { lead_id: id, ...pass, ...source, error });
-      if (idx < rawRows.length) await sleep(1000);
-      continue;
-    }
-
-    const status = parsed.qualification_status || '';
-    const company = parsed.company_name || lead.companyName || '<no company>';
-
-    let notionErr = '';
-    if (notionEnabled) {
-      try { await L.createPage(token, dbId, L.buildProperties(parsed, schemaMap)); }
-      catch (err) { notionErr = err.message; }
-    }
-    if (notionErr) {
-      counts.errors++;
-      console.log(`-> error (notion: ${notionErr}) (${secs}s)`);
-      L.appendCsvRow(files.errors, L.CSV_COLUMNS, { lead_id: id, ...pass, ...parsed, ...source, error: `notion: ${notionErr}` });
-      if (idx < rawRows.length) await sleep(1000);
-      continue;
-    }
-
-    const bucket = L.classifyStatus(status);
-    L.appendCsvRow(files[bucket], L.CSV_COLUMNS, { lead_id: id, ...pass, ...parsed, ...source, error: '' });
-    const k = status.toLowerCase().replace(/\s+/g, '_');
-    if (k === 'qualified') counts.qualified++;
-    else if (k === 'needs_review') counts.needs_review++;
-    else if (k === 'disqualified') counts.disqualified++;
-    console.log(`-> ${status || '<no status>'} [${bucket}] (${secs}s)`);
-
-    if (idx < rawRows.length) await sleep(1000);
+  // Drop resume-skipped leads up-front so the worker pool only processes new
+  // ones — and so per-lead numbers in the log reflect actual work, not skips.
+  const remaining = [];
+  for (const row of rawRows) {
+    if (resume && processed.has(L.leadId(row))) counts.skipped++;
+    else remaining.push(row);
   }
+  if (counts.skipped) console.log(`Skipping ${counts.skipped} already-processed lead(s).`);
+
+  const CONCURRENCY = Math.max(1, Number(process.env.CONCURRENCY || 1));
+  const total = remaining.length;
+  console.log(`Processing ${total} lead(s) with concurrency=${CONCURRENCY}.`);
+
+  // Worker pool: each worker pulls the next index from `nextIdx`; workers
+  // finish when the queue drains. CSV appends use fs.appendFileSync, which
+  // serializes byte writes per call — concurrent appends won't interleave.
+  let nextIdx = 0;
+  async function worker() {
+    while (true) {
+      const i = nextIdx++;
+      if (i >= total) return;
+      const idx = i + 1;
+      const row = remaining[i];
+      const id = L.leadId(row);
+      const lead = L.normalizeLead(row);
+      const pass = L.passthroughFields(row);
+      const source = L.sourceFields(row);
+      const prompt = L.buildPrompt(lead, instructions);
+      const t0 = Date.now();
+      const { ok, parsed, raw, error } = await qualifyLead(key, prompt, opts);
+      const secs = ((Date.now() - t0) / 1000).toFixed(0);
+      const labelCompany = lead.companyName || '<lead>';
+
+      if (!ok) {
+        counts.errors++;
+        console.log(`${idx}/${total} ${labelCompany} -> error (${error}) (${secs}s)`);
+        if (raw) console.error('  --- raw opencode response ---\n' + raw + '\n  --- end raw ---');
+        L.appendCsvRow(files.errors, L.CSV_COLUMNS, { lead_id: id, ...pass, ...source, error });
+        continue;
+      }
+
+      const status = parsed.qualification_status || '';
+      const company = parsed.company_name || labelCompany;
+
+      let notionErr = '';
+      if (notionEnabled) {
+        try { await L.createPage(token, dbId, L.buildProperties(parsed, schemaMap)); }
+        catch (err) { notionErr = err.message; }
+      }
+      if (notionErr) {
+        counts.errors++;
+        console.log(`${idx}/${total} ${company} -> error (notion: ${notionErr}) (${secs}s)`);
+        L.appendCsvRow(files.errors, L.CSV_COLUMNS, { lead_id: id, ...pass, ...parsed, ...source, error: `notion: ${notionErr}` });
+        continue;
+      }
+
+      const bucket = L.classifyStatus(status);
+      L.appendCsvRow(files[bucket], L.CSV_COLUMNS, { lead_id: id, ...pass, ...parsed, ...source, error: '' });
+      const k = status.toLowerCase().replace(/\s+/g, '_');
+      if (k === 'qualified') counts.qualified++;
+      else if (k === 'needs_review') counts.needs_review++;
+      else if (k === 'disqualified') counts.disqualified++;
+      console.log(`${idx}/${total} ${company} -> ${status || '<no status>'} [${bucket}] (${secs}s)`);
+    }
+  }
+  await Promise.all(Array.from({ length: CONCURRENCY }, () => worker()));
 
   console.log('---\nSummary:');
   console.log(`  total:        ${counts.total}`);
