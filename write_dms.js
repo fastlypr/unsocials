@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 /**
  * write_dms.js — Write cold outreach DMs for qualified leads using NVIDIA NIM.
- * Reads results/qualified.csv (from qualify_leads_zen.js) + DM.md (the prompt).
- * Writes one DM per qualified lead to results/dms.csv.
+ * Updates results/qualified.csv IN PLACE by filling a new `dm_text` column.
+ * Reads the DM-writing prompt from DM.md.
  *
  * Usage:
  *   node write_dms.js
@@ -14,22 +14,23 @@
  *   NVIDIA_MODEL     default: openai/gpt-oss-120b
  *   NVIDIA_BASE_URL  default: https://integrate.api.nvidia.com/v1
  *   NVIDIA_TIMEOUT   per-DM timeout seconds (default 300)
+ *   NVIDIA_RPM       requests/minute cap, shared across workers (default 40)
  *   RESULTS_DIR      default: ./results
- *   RESUME           default: 1 (skip already-written DMs)
  *   CONCURRENCY      default: 1
- *   LIMIT            default: 0 (all qualified)
+ *   LIMIT            default: 0 (all qualified rows without a DM yet)
+ *
+ * Resume: rows whose `dm_text` is already non-empty are skipped automatically.
+ * Errors are logged to stderr; the row's dm_text stays empty so the next run
+ * retries it.
+ *
+ * IMPORTANT: do not run this while qualify_leads_zen.js is still writing to
+ * qualified.csv — they'd race on the same file.
  */
 'use strict';
 
 const fs = require('node:fs');
 const path = require('node:path');
 const L = require('./lib');
-
-const DM_CSV_COLUMNS = [
-  'lead_id', 'first_name', 'company_name', 'defaultProfileUrl', 'companyUrl',
-  'lead_category', 'lead_sub_category', 'business_type_plural', 'city', 'market_line',
-  'personal_note', 'personal_hook', 'hook_fallback', 'dm_text', 'error',
-];
 
 // lead_sub_category -> business_type_plural
 const BIZ_TYPE_PLURAL = {
@@ -57,14 +58,12 @@ function loadDmPrompt() {
   throw new Error('DM.md not found.');
 }
 
-/** Derive market_line from location: "Phuket, Thailand" -> "Thailand", "Bangkok" -> "Bangkok". */
 function computeMarketLine(location) {
   if (!location) return '';
   const parts = location.split(',').map(s => s.trim()).filter(Boolean);
   return parts[parts.length - 1] || '';
 }
 
-/** Rule-based hook_fallback: "saw you run a <type> in <city or market>". */
 function computeHookFallback(subCategory, city, marketLine) {
   if (!subCategory) return '';
   if (subCategory === 'Outside ICP' || subCategory === 'Unclear') return '';
@@ -81,9 +80,8 @@ function buildPrompt(promptBody, vars) {
 
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
-/** Shared rate limiter: spaces requests evenly across all workers so we stay
- *  under NVIDIA's RPM cap (40 rpm on the free tier). Reserves a timestamp slot
- *  per call and waits if it's still in the future. */
+/** Shared rate limiter: spaces requests evenly across all workers so total
+ *  throughput stays under NVIDIA's RPM cap (40 rpm on the free tier). */
 let _earliestNextRequest = 0;
 async function rateLimit(minIntervalMs) {
   if (minIntervalMs <= 0) return;
@@ -93,7 +91,6 @@ async function rateLimit(minIntervalMs) {
   if (slot > now) await sleep(slot - now);
 }
 
-/** POST to NVIDIA's OpenAI-compatible /chat/completions with retry on 429/5xx. */
 async function callNvidia(prompt, opts) {
   const maxAttempts = 4;
   let lastErr = '';
@@ -136,6 +133,16 @@ async function callNvidia(prompt, opts) {
   throw new Error(lastErr || 'unknown nvidia error');
 }
 
+/** Atomically rewrite the CSV: write to .tmp, then rename. fs.* sync calls
+ *  serialize at the event-loop level, so concurrent workers can't corrupt. */
+function rewriteCsv(filePath, columns, rows) {
+  const lines = [columns.join(',')];
+  for (const r of rows) lines.push(columns.map(c => L.csvEscape(r[c])).join(','));
+  const tmp = filePath + '.tmp';
+  fs.writeFileSync(tmp, lines.join('\n') + '\n', 'utf8');
+  fs.renameSync(tmp, filePath);
+}
+
 async function main() {
   const envFile = L.loadDotenv();
   if (envFile) console.log(`Loaded environment from ${envFile}`);
@@ -150,7 +157,6 @@ async function main() {
 
   const resultsDir = process.env.RESULTS_DIR || path.join(process.cwd(), 'results');
   const qualifiedCsv = path.join(resultsDir, 'qualified.csv');
-  const dmsCsv = path.join(resultsDir, 'dms.csv');
 
   if (!fs.existsSync(qualifiedCsv)) {
     console.error(`Not found: ${qualifiedCsv}. Run qualify_leads_zen.js first.`);
@@ -160,22 +166,34 @@ async function main() {
   const { body: promptBody, file: promptFile } = loadDmPrompt();
   console.log(`Loaded DM prompt from ${promptFile} (${promptBody.length} chars).`);
 
-  let rows = L.parseCsv(fs.readFileSync(qualifiedCsv, 'utf8'));
-  rows = rows.filter(r => (r.qualification_status || '').toLowerCase() === 'qualified');
-  console.log(`Loaded ${rows.length} qualified lead(s) from ${qualifiedCsv}.`);
+  // Load all rows, ensure every row has every expected column key (parseCsv
+  // omits keys absent in the original header — initialize them to '').
+  const allRows = L.parseCsv(fs.readFileSync(qualifiedCsv, 'utf8'));
+  for (const r of allRows) {
+    for (const c of L.CSV_COLUMNS) if (!(c in r)) r[c] = '';
+  }
+  console.log(`Loaded ${allRows.length} row(s) from ${qualifiedCsv}.`);
+
+  // Queue: Qualified rows whose dm_text is still empty.
+  let remaining = allRows.filter(r =>
+    (r.qualification_status || '').toLowerCase() === 'qualified' &&
+    !(r.dm_text || '').trim()
+  );
+  const skipped = allRows.filter(r =>
+    (r.qualification_status || '').toLowerCase() === 'qualified' &&
+    (r.dm_text || '').trim()
+  ).length;
+  if (skipped) console.log(`Resume: skipping ${skipped} qualified lead(s) that already have a DM.`);
 
   const limit = Number(process.env.LIMIT || 0);
-  if (limit > 0 && rows.length > limit) { rows = rows.slice(0, limit); console.log(`LIMIT=${limit}: processing only the first ${limit}.`); }
+  if (limit > 0 && remaining.length > limit) { remaining = remaining.slice(0, limit); console.log(`LIMIT=${limit}: processing only the first ${limit}.`); }
 
-  L.ensureCsvHeader(dmsCsv, DM_CSV_COLUMNS);
-  const resume = !/^(0|false|no)$/i.test(process.env.RESUME || '1');
-  const processed = resume ? L.readProcessedIds([dmsCsv]) : new Set();
-  if (processed.size) console.log(`Resume on: skipping ${processed.size} already-written DM(s).`);
-
-  const remaining = rows.filter(r => !processed.has(r.lead_id));
   const CONCURRENCY = Math.max(1, Number(process.env.CONCURRENCY || 1));
   console.log(`Writing ${remaining.length} DM(s) with model=${model}, concurrency=${CONCURRENCY}, rate-limit=${rpm}rpm.`);
-  console.log(`Output: ${dmsCsv}`);
+  console.log(`Updating ${qualifiedCsv} in place.`);
+
+  // Persist the schema upfront so partial progress is always readable.
+  rewriteCsv(qualifiedCsv, L.CSV_COLUMNS, allRows);
 
   const counts = { total: remaining.length, written: 0, errors: 0 };
   let nextIdx = 0;
@@ -201,11 +219,9 @@ async function main() {
         first_name: row.first_name || '',
         company_name: row.company_name || '',
         business_type_plural: businessTypePlural,
-        city: city,
+        city,
         market_line: marketLine,
         hook_fallback: hookFallback,
-        // Raw enrichment fields — the DM.md prompt derives personal_note and
-        // personal_hook from these instead of receiving them pre-filled.
         title: row.title || '',
         titleDescription: row.titleDescription || '',
         summary: row.summary || '',
@@ -218,28 +234,16 @@ async function main() {
       const t0 = Date.now();
       try {
         const dm = await callNvidia(prompt, { apiKey, model, baseUrl, timeoutSec, minIntervalMs });
+        row.dm_text = dm;
+        rewriteCsv(qualifiedCsv, L.CSV_COLUMNS, allRows);
         const secs = ((Date.now() - t0) / 1000).toFixed(0);
-        L.appendCsvRow(dmsCsv, DM_CSV_COLUMNS, {
-          lead_id: row.lead_id,
-          first_name: row.first_name, company_name: row.company_name,
-          defaultProfileUrl: row.defaultProfileUrl, companyUrl: row.companyUrl,
-          lead_category: row.lead_category, lead_sub_category: subCat,
-          business_type_plural: businessTypePlural, city, market_line: marketLine,
-          personal_note: '', personal_hook: '', hook_fallback: hookFallback,
-          dm_text: dm, error: '',
-        });
         counts.written++;
         console.log(`${idx}/${remaining.length} ${row.company_name} -> DM written (${secs}s)`);
       } catch (err) {
         const secs = ((Date.now() - t0) / 1000).toFixed(0);
         counts.errors++;
-        console.log(`${idx}/${remaining.length} ${row.company_name} -> error: ${err.message} (${secs}s)`);
-        L.appendCsvRow(dmsCsv, DM_CSV_COLUMNS, {
-          lead_id: row.lead_id,
-          first_name: row.first_name, company_name: row.company_name,
-          defaultProfileUrl: row.defaultProfileUrl, companyUrl: row.companyUrl,
-          error: err.message,
-        });
+        // dm_text stays empty so the next run retries this row.
+        console.error(`${idx}/${remaining.length} ${row.company_name} -> error: ${err.message} (${secs}s)`);
       }
     }
   }
@@ -250,7 +254,7 @@ async function main() {
   console.log(`  total:   ${counts.total}`);
   console.log(`  written: ${counts.written}`);
   console.log(`  errors:  ${counts.errors}`);
-  console.log(`DMs: ${dmsCsv}`);
+  console.log(`Updated: ${qualifiedCsv}`);
 }
 
 main().catch(err => { console.error(`Fatal: ${err.message}`); process.exit(1); });

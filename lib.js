@@ -67,9 +67,13 @@ const PASSTHROUGH_KEYS = ['fullName', 'defaultProfileUrl', 'companyUrl'];
 // Saved AFTER the AI-generated columns so the qualification view stays clean.
 const DM_SOURCE_KEYS = ['title', 'titleDescription', 'summary', 'industry', 'location', 'companyLocation'];
 
+// DM writer columns (filled by write_dms.js, not the qualifier — but listed
+// here so the qualifier's CSV migrator preserves them on schema updates).
+const DM_KEYS = ['dm_text'];
+
 // Final CSV column order: lead_id (resume key) | presentation passthrough |
-// AI-generated qualification fields | raw DM-source fields | error.
-const CSV_COLUMNS = ['lead_id', ...PASSTHROUGH_KEYS, ...OUTPUT_KEYS, ...DM_SOURCE_KEYS, 'error'];
+// AI qualification fields | DM output | raw DM-source fields | error.
+const CSV_COLUMNS = ['lead_id', ...PASSTHROUGH_KEYS, ...OUTPUT_KEYS, ...DM_KEYS, ...DM_SOURCE_KEYS, 'error'];
 
 // ---------------------------------------------------------------------------
 // Field mapping: your sheet/CSV columns -> the prompt's declared input fields.
@@ -466,7 +470,7 @@ async function createPage(token, dbId, properties) {
 
 module.exports = {
   loadDotenv,
-  OUTPUT_KEYS, PROPERTY_MAP, CSV_COLUMNS, PASSTHROUGH_KEYS, DM_SOURCE_KEYS,
+  OUTPUT_KEYS, PROPERTY_MAP, CSV_COLUMNS, PASSTHROUGH_KEYS, DM_SOURCE_KEYS, DM_KEYS,
   normalizeLead, leadId, passthroughFields, sourceFields, loadLeads, isGoogleSheetUrl,
   parseCsv, csvEscape, ensureCsvHeader, appendCsvRow, readProcessedIds,
   makeResultFiles, classifyStatus,
