@@ -116,6 +116,13 @@ STATUS LOGIC
 2. Disqualified: any gate failed, business is outside ICP, person lacks authority, or the current business is unclear.
 3. Needs Review: all gates passed but there is one major conflicting signal such as wrong industry tag, generic holding company name, unclear operations, borderline seniority, or missing company name.
 
+QUALIFICATION_NOTE RULES
+The qualification_note must show actual reasoning, not a template. Each note must:
+1. Name the SPECIFIC signal that drove the decision — quote or paraphrase a concrete detail from this lead's row (a fact from linkedinDescription, companyName, linkedinJobDescription, linkedinJobTitle, or companyIndustry). Do NOT just write "<title> of <company>, a <type> operator with clear authority" — that is a template, not reasoning.
+2. Be honest about WHY this decision was made for THIS lead. If two leads in the same sub-category get the same status, their notes should still differ because the supporting evidence differs.
+3. One sentence, max 25 words. Plain factual prose. No hedging, no bullet points, no quotes around the whole sentence.
+4. Vary phrasing across leads — never start every Qualified note with "<title> of <company>". Lead with the signal when the signal is strongest (e.g. start with "Operates a multi-location...", "Industry tag says X but linkedinDescription describes...", "Founder of Y, but linkedinDescription shows they advise rather than operate...").
+
 SPECIAL HANDLING
 1. If the company manages multiple properties, venues, or locations, mention "portfolio lead" or "multi-location lead" in the note.
 2. If title is borderline but business fit is strong, prefer Needs Review over Qualified.
@@ -132,18 +139,19 @@ If status is Disqualified, skip this entire section and leave first_name, compan
 
 The DM hook variables (business_type_plural, market_line, personal_note, personal_hook, hook_fallback) are produced by a separate downstream script that consumes qualified.csv. Do NOT output them here.
 
-GOOD qualification_note STYLE
-1. Founder of a coaching business serving hospitality leaders, so current business is outside ICP
-2. General Manager of Sole Mio Boutique Hotel and Wellness, a hotel operator with clear authority
-3. Industry association serving hotel professionals with training and insights, not a hotel operator, so outside ICP
-4. Owner title plus F&B industry tag, but missing company name so business type needs review
-5. Director of Operations at Minor Hotels, portfolio lead with clear authority
+GOOD qualification_note STYLE (notice each one cites a specific signal from the row, not just role + company type)
+1. Bio says "I help hospitality leaders scale their teams" — coaching practice, not an operator, so outside ICP
+2. linkedinDescription mentions running a 38-villa rainforest retreat across two properties — operator with portfolio scale and GM authority
+3. Industry tag is Hospitality but companyName "HospitalityAdvisors" and bio describe an advisory firm, so outside ICP
+4. Title says "Owner" but companyName is missing entirely, can't confirm operating business so Needs Review
+5. titleDescription describes a 531-room hotel with 6 F&B outlets and a day spa — clearly an operating venue at scale
 
-BAD qualification_note STYLE
-1. good fit
-2. outside ICP
-3. unclear
+BAD qualification_note STYLE (templated, no real signal cited)
+1. General Manager of <company>, a hotel operator with clear authority   ← template, not reasoning
+2. good fit
+3. outside ICP
 4. senior lead
+5. Owner of <company>, an operating wellness venue with decision authority   ← template, not reasoning
 
 WORKED EXAMPLES
 
@@ -153,7 +161,7 @@ Output values:
 qualification_status: Qualified
 lead_category: Hospitality
 lead_sub_category: Resort
-qualification_note: General Manager of Keemala, a 38-villa luxury resort operator with clear authority
+qualification_note: linkedinDescription says "Leading a 38-villa luxury rainforest retreat" — operator at clear scale and the GM title gives buying authority
 first_name: Nick
 company_name: Keemala
 city: Phuket
@@ -164,7 +172,7 @@ Output values:
 qualification_status: Qualified
 lead_category: Lifestyle
 lead_sub_category: Spa
-qualification_note: Owner of Serenity Day Spa, an operating wellness venue with decision authority
+qualification_note: companyName "Serenity Day Spa" and Owner title together name a clear consumer-facing spa operator, even with no description
 first_name: Sara
 company_name: Serenity Day Spa
 city: (blank)
@@ -175,4 +183,4 @@ Output values:
 qualification_status: Disqualified
 lead_category: Outside ICP
 lead_sub_category: Outside ICP
-qualification_note: Consulting firm advising hotels, not operating one, so outside ICP
+qualification_note: companyName "HospitalityAdvisors Co" and Hospitality Consultant title both describe a B2B advisory firm, not a venue operator, so outside ICP
