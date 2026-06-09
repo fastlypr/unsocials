@@ -145,6 +145,7 @@ async function main() {
 
     const lead = L.normalizeLead(row);
     const pass = L.passthroughFields(row);
+    const source = L.sourceFields(row);
     const prompt = L.buildPrompt(lead, instructions);
 
     // Live progress line BEFORE the (30-90s) reasoning call, so a slow lead
@@ -156,7 +157,7 @@ async function main() {
     if (!ok) {
       counts.errors++;
       console.log(`-> error (${error}) (${secs}s)`);
-      L.appendCsvRow(files.errors, L.CSV_COLUMNS, { lead_id: id, ...pass, error });
+      L.appendCsvRow(files.errors, L.CSV_COLUMNS, { lead_id: id, ...pass, ...source, error });
       if (idx < rawRows.length) await sleep(1000);
       continue;
     }
@@ -172,13 +173,13 @@ async function main() {
     if (notionErr) {
       counts.errors++;
       console.log(`-> error (notion: ${notionErr}) (${secs}s)`);
-      L.appendCsvRow(files.errors, L.CSV_COLUMNS, { lead_id: id, ...pass, ...parsed, error: `notion: ${notionErr}` });
+      L.appendCsvRow(files.errors, L.CSV_COLUMNS, { lead_id: id, ...pass, ...parsed, ...source, error: `notion: ${notionErr}` });
       if (idx < rawRows.length) await sleep(1000);
       continue;
     }
 
     const bucket = L.classifyStatus(status);
-    L.appendCsvRow(files[bucket], L.CSV_COLUMNS, { lead_id: id, ...pass, ...parsed, error: '' });
+    L.appendCsvRow(files[bucket], L.CSV_COLUMNS, { lead_id: id, ...pass, ...parsed, ...source, error: '' });
     const k = status.toLowerCase().replace(/\s+/g, '_');
     if (k === 'qualified') counts.qualified++;
     else if (k === 'needs_review') counts.needs_review++;

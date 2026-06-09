@@ -124,25 +124,13 @@ SPECIAL HANDLING
 5. If linkedinDescription describes them as a keynote speaker, author, or thought leader without an operating business, Disqualify.
 
 VARIABLE GENERATION (only if status is Qualified or Needs Review)
-If status is Disqualified, skip this entire section and leave all variable fields blank.
+If status is Disqualified, skip this entire section and leave first_name, company_name, and city blank.
 
 1. first_name: a CLEAN, CALLABLE first name to address the person in a DM ("Hi <first_name>"). Take firstName, remove emojis, titles (Mr, Ms, Mrs, Dr, Chef, Eng, etc.), certifications (CHA, MBA, PhD, etc.), and quotes. Keep only the single given name in proper case. If firstName is a full name, use only the first given name. If it is not a real personal name, leave blank.
 2. company_name: a CLEAN brand name for a DM. Take companyName, remove legal suffixes (Ltd, Limited, LLC, LLP, Inc, Co., Corp, Pvt, Pvt Ltd, Pte, Sdn Bhd, GmbH, etc.), trailing punctuation, emojis, and any tagline after a separator like "|", "-", "–", or ":". Keep the recognizable brand name. If missing, leave blank.
-3. business_type_plural: derive from lead_sub_category using this exact map. Never default to "hotels" or "venues" when a more specific type is known.
-   Hotel->hotels, Resort->resorts, Serviced Apartment->serviced apartments, Villa->villas, Hospitality Brand->hospitality brands, Restaurant->restaurants, Cafe->cafes, Bar->bars, Cloud Kitchen->cloud kitchens, Dining Group->dining groups, F&B Brand->F&B brands, Real Estate Developer->developers, Property Group->property groups, Real Estate Agency->real estate agencies, Project Launch->project launches, Salon->salons, Gym->gyms, Spa->spas, Studio->studios, Wellness Brand->wellness brands, Lifestyle Brand->lifestyle brands.
-4. city: extract the city from linkedinJobLocation only if clearly present. If not present, leave blank. Never guess.
-5. market_line: the broader region or country from linkedinJobLocation (for example Thailand, Phuket, Dubai). If only a city is present, you may use that city. If location is unknown, leave blank. Never invent.
-6. personal_note: ONE short, factual touch built only from the lead's data. Allowed sources: linkedinJobTitle (role or seniority) plus a named property, brand, or portfolio in companyName or linkedinDescription. Format like "as General Manager of Keemala" or "running a multi-property hotel group". Max 12 words. No flattery, no greetings, no questions, no guessing. If nothing concrete exists, leave blank.
-7. personal_hook: ONE specific, FACTUAL observation that names a concrete detail about the business. Build it only from real data in linkedinDescription, linkedinCompanySpecialities, linkedinCompanyTagline, or linkedinCompanyDescription. Lead with "saw you're running" or "saw you run" and state the concrete specifics: scale figure, venue type, signature concept, and location if known. Required style:
-   - saw you're running a 38-villa rainforest retreat in Phuket
-   - saw you run an adult-only wellness retreat on Bang Tao Beach
-   - saw you operate three rooftop bars across Bangkok
-   Max 16 words. State the fact, do not react to it. BANNED phrasing (too generic): "caught my eye", "stood out", "loved that", "impressive", "amazing", any praise or opinion word, and any question. If no concrete, specific detail exists, leave blank. Do not reuse the same detail already used in personal_note; if only one solid detail exists, fill personal_note and leave personal_hook blank.
-8. hook_fallback: a SAFE backup hook for leads where personal_hook is blank because no specific detail exists. Build it ONLY from facts you are certain of: the venue type implied by lead_sub_category plus the most specific location available. For the location, prefer a named beach, area, or district found inside companyName (e.g. "Mai Khao Beach", "Bophut Beach"); otherwise use the city; otherwise the country. Lead with "saw you're running" or "saw you run". Required style:
-   - saw you run a beach resort on Mai Khao, Phuket
-   - saw you run a beachfront resort on Bophut Beach, Samui
-   - saw you're running a hotel in Bangkok
-   Max 14 words. NEVER invent scale figures, concepts, brands, or specifics that are not in the data — this is the generic backup, not a fake-specific hook. Always fill hook_fallback when a venue type and any location are known, even if personal_hook is also filled. If the venue type and every location are unknown, leave blank. Leave blank for Disqualified leads.
+3. city: extract the city from linkedinJobLocation only if clearly present. If not present, leave blank. Never guess.
+
+The DM hook variables (business_type_plural, market_line, personal_note, personal_hook, hook_fallback) are produced by a separate downstream script that consumes qualified.csv. Do NOT output them here.
 
 GOOD qualification_note STYLE
 1. Founder of a coaching business serving hospitality leaders, so current business is outside ICP
@@ -157,28 +145,10 @@ BAD qualification_note STYLE
 3. unclear
 4. senior lead
 
-GOOD personal_note STYLE
-1. as General Manager of Keemala
-2. running a multi-property hotel group
-3. CHA-certified hospitality operator
-4. owner of a Bangkok rooftop bar
-
-GOOD personal_hook STYLE (state the fact, no reaction)
-1. saw you're running a 38-villa rainforest retreat in Phuket
-2. saw you run an adult-only wellness retreat on Bang Tao Beach
-3. saw you operate three rooftop bars across Bangkok
-4. saw you run a farm-to-table dining group in Bali
-
-BAD personal_hook STYLE
-1. your 38-villa retreat caught my eye (filler reaction)
-2. loved that you focus on sustainable luxury dining (opinion)
-3. impressive wellness brand (praise)
-4. how is the retreat going (question)
-
 WORKED EXAMPLES
 
 Example 1 — Resort GM, rich data
-Input: firstName: Nick | companyName: Keemala | linkedinJobTitle: General Manager | linkedinDescription: Leading a 38-villa luxury rainforest retreat | linkedinCompanySpecialities: wellness, sustainable luxury | linkedinJobLocation: Phuket, Thailand | companyIndustry: Hospitality
+Input: firstName: Nick | companyName: Keemala | linkedinJobTitle: General Manager | linkedinDescription: Leading a 38-villa luxury rainforest retreat | linkedinJobLocation: Phuket, Thailand | companyIndustry: Hospitality
 Output values:
 qualification_status: Qualified
 lead_category: Hospitality
@@ -186,12 +156,7 @@ lead_sub_category: Resort
 qualification_note: General Manager of Keemala, a 38-villa luxury resort operator with clear authority
 first_name: Nick
 company_name: Keemala
-business_type_plural: resorts
 city: Phuket
-market_line: Thailand
-personal_note: as General Manager of Keemala
-personal_hook: saw you're running a 38-villa rainforest retreat in Phuket
-hook_fallback: saw you run a resort in Phuket
 
 Example 2 — Spa owner, thin data
 Input: firstName: Sara | companyName: Serenity Day Spa | linkedinJobTitle: Owner | linkedinJobLocation: N/A | companyIndustry: Wellness and Fitness
@@ -202,12 +167,7 @@ lead_sub_category: Spa
 qualification_note: Owner of Serenity Day Spa, an operating wellness venue with decision authority
 first_name: Sara
 company_name: Serenity Day Spa
-business_type_plural: spas
 city: (blank)
-market_line: (blank)
-personal_note: as the owner of Serenity Day Spa
-personal_hook: (blank)
-hook_fallback: (blank)
 
 Example 3 — Hospitality consultant (disqualified)
 Input: firstName: David | companyName: HospitalityAdvisors Co | linkedinJobTitle: Hospitality Consultant | linkedinJobLocation: Dubai | companyIndustry: Hospitality

@@ -41,10 +41,12 @@ function loadDotenv() {
 // ---------------------------------------------------------------------------
 // Output keys / Notion property mapping (skill key -> Notion property name)
 // ---------------------------------------------------------------------------
+// Qualification-only output. DM-writing variables (business_type_plural,
+// market_line, personal_note, personal_hook, hook_fallback) live in a separate
+// downstream script that consumes qualified.csv.
 const OUTPUT_KEYS = [
   'qualification_status', 'lead_category', 'lead_sub_category', 'qualification_note',
-  'first_name', 'company_name', 'business_type_plural', 'city',
-  'market_line', 'personal_note', 'personal_hook', 'hook_fallback',
+  'first_name', 'company_name', 'city',
 ];
 
 const PROPERTY_MAP = {
@@ -54,19 +56,20 @@ const PROPERTY_MAP = {
   qualification_note:    'Note',
   first_name:            'First Name',
   company_name:          'Company',
-  business_type_plural:  'Business Type Plural',
   city:                  'City',
-  market_line:           'Market Line',
-  personal_note:         'Personal Note',
-  personal_hook:         'Personal Hook',
-  hook_fallback:         'Hook Fallback',
 };
 
-// Source columns copied verbatim into the output CSV (NOT AI-generated).
+// Presentation source columns shown up-front in the output CSV.
 const PASSTHROUGH_KEYS = ['fullName', 'defaultProfileUrl', 'companyUrl'];
 
-// CSV columns: lead_id (resume key) + passthrough source fields + 11 AI fields + error.
-const CSV_COLUMNS = ['lead_id', ...PASSTHROUGH_KEYS, ...OUTPUT_KEYS, 'error'];
+// Raw source columns kept verbatim so the downstream DM-writer script has
+// everything it needs to generate personal_note / personal_hook / etc.
+// Saved AFTER the AI-generated columns so the qualification view stays clean.
+const DM_SOURCE_KEYS = ['title', 'titleDescription', 'summary', 'industry', 'location', 'companyLocation'];
+
+// Final CSV column order: lead_id (resume key) | presentation passthrough |
+// AI-generated qualification fields | raw DM-source fields | error.
+const CSV_COLUMNS = ['lead_id', ...PASSTHROUGH_KEYS, ...OUTPUT_KEYS, ...DM_SOURCE_KEYS, 'error'];
 
 // ---------------------------------------------------------------------------
 // Field mapping: your sheet/CSV columns -> the prompt's declared input fields.
@@ -134,6 +137,15 @@ function passthroughFields(row) {
     defaultProfileUrl: cleanVal(row.defaultProfileUrl),
     companyUrl: cleanVal(row.regularCompanyUrl) || cleanVal(row.companyUrl),
   };
+}
+
+/** Raw source columns saved for the downstream DM-writer script. Original
+ *  sheet column names preserved (title, summary, industry, etc.) so the DM
+ *  writer can either consume them directly or re-normalize via normalizeLead. */
+function sourceFields(row) {
+  const out = {};
+  for (const key of DM_SOURCE_KEYS) out[key] = cleanVal(row[key]);
+  return out;
 }
 
 /** Stable id for resume/dedup. Prefers a profile URL; falls back to vmid,
@@ -323,19 +335,14 @@ lead_category: <value>
 lead_sub_category: <value>
 qualification_note: <value>
 
-If Qualified or Needs Review, return ONLY these 12 lines:
+If Qualified or Needs Review, return ONLY these 7 lines:
 qualification_status: <value>
 lead_category: <value>
 lead_sub_category: <value>
 qualification_note: <value>
 first_name: <value>
 company_name: <value>
-business_type_plural: <value>
 city: <value>
-market_line: <value>
-personal_note: <value>
-personal_hook: <value>
-hook_fallback: <value>
 
 When the instructions say a field is blank, leave it truly empty after the colon (e.g. "city:"). Do not write "(blank)", "none", or "N/A".`;
 
@@ -459,8 +466,8 @@ async function createPage(token, dbId, properties) {
 
 module.exports = {
   loadDotenv,
-  OUTPUT_KEYS, PROPERTY_MAP, CSV_COLUMNS, PASSTHROUGH_KEYS,
-  normalizeLead, leadId, passthroughFields, loadLeads, isGoogleSheetUrl,
+  OUTPUT_KEYS, PROPERTY_MAP, CSV_COLUMNS, PASSTHROUGH_KEYS, DM_SOURCE_KEYS,
+  normalizeLead, leadId, passthroughFields, sourceFields, loadLeads, isGoogleSheetUrl,
   parseCsv, csvEscape, ensureCsvHeader, appendCsvRow, readProcessedIds,
   makeResultFiles, classifyStatus,
   loadPromptFile, buildPrompt, parseLeadOutput,

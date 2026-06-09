@@ -141,6 +141,7 @@ async function main() {
 
     const lead = L.normalizeLead(row);
     const pass = L.passthroughFields(row);
+    const source = L.sourceFields(row);
     const prompt = L.buildPrompt(lead, instructions);
 
     const { ok, parsed, raw, error } = await qualifyLead(prompt, opts);
@@ -148,7 +149,7 @@ async function main() {
       counts.errors++;
       console.error(`${idx}/${rawRows.length} <unknown> -> error (${error})`);
       if (raw) console.error('  --- raw opencode response ---\n' + raw + '\n  --- end raw ---');
-      L.appendCsvRow(files.errors, L.CSV_COLUMNS, { lead_id: id, ...pass, error });
+      L.appendCsvRow(files.errors, L.CSV_COLUMNS, { lead_id: id, ...pass, ...source, error });
       if (idx < rawRows.length) await sleep(1000);
       continue;
     }
@@ -165,14 +166,14 @@ async function main() {
     if (notionErr) {
       counts.errors++;
       console.error(`${idx}/${rawRows.length} ${company} -> error (notion: ${notionErr})`);
-      L.appendCsvRow(files.errors, L.CSV_COLUMNS, { lead_id: id, ...pass, ...parsed, error: `notion: ${notionErr}` });
+      L.appendCsvRow(files.errors, L.CSV_COLUMNS, { lead_id: id, ...pass, ...parsed, ...source, error: `notion: ${notionErr}` });
       if (idx < rawRows.length) await sleep(1000);
       continue;
     }
 
     // Success: route to the qualified vs disqualified/needs_review bucket.
     const bucket = L.classifyStatus(status);
-    L.appendCsvRow(files[bucket], L.CSV_COLUMNS, { lead_id: id, ...pass, ...parsed, error: '' });
+    L.appendCsvRow(files[bucket], L.CSV_COLUMNS, { lead_id: id, ...pass, ...parsed, ...source, error: '' });
     const key = status.toLowerCase().replace(/\s+/g, '_');
     if (key === 'qualified') counts.qualified++;
     else if (key === 'needs_review') counts.needs_review++;
