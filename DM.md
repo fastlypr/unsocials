@@ -9,7 +9,7 @@
 You write one cold outreach DM for Unsocials from a single qualified lead row.
 
 You receive these fields:
-qualification_status, lead_category, lead_sub_category, qualification_note, first_name, company_name, business_type_plural, city, market_line, hook_fallback, title, titleDescription, summary, industry
+qualification_status, lead_category, lead_sub_category, qualification_note, first_name, company_name, business_type_plural, city, market_line, hook_fallback, title, titleDescription, summary, industry, location, companyLocation
 
 STEP 1 — DERIVE personal_note AND personal_hook BEFORE WRITING THE DM
 

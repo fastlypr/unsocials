@@ -81,11 +81,24 @@ function buildPrompt(promptBody, vars) {
 
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
+/** Shared rate limiter: spaces requests evenly across all workers so we stay
+ *  under NVIDIA's RPM cap (40 rpm on the free tier). Reserves a timestamp slot
+ *  per call and waits if it's still in the future. */
+let _earliestNextRequest = 0;
+async function rateLimit(minIntervalMs) {
+  if (minIntervalMs <= 0) return;
+  const now = Date.now();
+  const slot = Math.max(now, _earliestNextRequest);
+  _earliestNextRequest = slot + minIntervalMs;
+  if (slot > now) await sleep(slot - now);
+}
+
 /** POST to NVIDIA's OpenAI-compatible /chat/completions with retry on 429/5xx. */
 async function callNvidia(prompt, opts) {
   const maxAttempts = 4;
   let lastErr = '';
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    await rateLimit(opts.minIntervalMs);
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), opts.timeoutSec * 1000);
     try {
@@ -132,6 +145,8 @@ async function main() {
   const model = process.env.NVIDIA_MODEL || 'openai/gpt-oss-120b';
   const baseUrl = process.env.NVIDIA_BASE_URL || 'https://integrate.api.nvidia.com/v1';
   const timeoutSec = Number(process.env.NVIDIA_TIMEOUT || 300);
+  const rpm = Math.max(1, Number(process.env.NVIDIA_RPM || 40));
+  const minIntervalMs = Math.ceil(60000 / rpm);
 
   const resultsDir = process.env.RESULTS_DIR || path.join(process.cwd(), 'results');
   const qualifiedCsv = path.join(resultsDir, 'qualified.csv');
@@ -159,7 +174,7 @@ async function main() {
 
   const remaining = rows.filter(r => !processed.has(r.lead_id));
   const CONCURRENCY = Math.max(1, Number(process.env.CONCURRENCY || 1));
-  console.log(`Writing ${remaining.length} DM(s) with model=${model}, concurrency=${CONCURRENCY}.`);
+  console.log(`Writing ${remaining.length} DM(s) with model=${model}, concurrency=${CONCURRENCY}, rate-limit=${rpm}rpm.`);
   console.log(`Output: ${dmsCsv}`);
 
   const counts = { total: remaining.length, written: 0, errors: 0 };
@@ -195,12 +210,14 @@ async function main() {
         titleDescription: row.titleDescription || '',
         summary: row.summary || '',
         industry: row.industry || '',
+        location: row.location || '',
+        companyLocation: row.companyLocation || '',
       };
 
       const prompt = buildPrompt(promptBody, vars);
       const t0 = Date.now();
       try {
-        const dm = await callNvidia(prompt, { apiKey, model, baseUrl, timeoutSec });
+        const dm = await callNvidia(prompt, { apiKey, model, baseUrl, timeoutSec, minIntervalMs });
         const secs = ((Date.now() - t0) / 1000).toFixed(0);
         L.appendCsvRow(dmsCsv, DM_CSV_COLUMNS, {
           lead_id: row.lead_id,
